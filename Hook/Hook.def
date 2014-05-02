@@ -1,0 +1,4 @@
+LIBRARY
+EXPORTS
+	HookProc
+	SetHookHandle
