@@ -38,7 +38,7 @@ struct Edge
 };
 
 WNDPROC oldSubclassProc;
-HANDLE logHandle;
+std::list<wchar_t*> windowClassesToIgnore;
 bool enabled;
 POINT originalCursorOffset = { 0 };
 bool inProgress = false;
@@ -56,14 +56,14 @@ void AddRectToEdges(const RECT& rect)
 	edges[Side::Top].push_front(Edge(rect.bottom, startX, endX));
 	edges[Side::Bottom].push_front(Edge(rect.top, startX, endX));
 
-	edges[Side::Left].push_front(Edge(rect.left, startY - 5, startY));
+/*	edges[Side::Left].push_front(Edge(rect.left, startY - 5, startY));
 	edges[Side::Left].push_front(Edge(rect.left, endY, endY + 5));
 	edges[Side::Right].push_front(Edge(rect.right, startY - 5, startY));
 	edges[Side::Right].push_front(Edge(rect.right, endY, endY + 5));
 	edges[Side::Top].push_front(Edge(rect.top, startX - 5, startX));
 	edges[Side::Top].push_front(Edge(rect.top, endX, endX + 5));
 	edges[Side::Bottom].push_front(Edge(rect.bottom, startX - 5, startX));
-	edges[Side::Bottom].push_front(Edge(rect.bottom, endX, endX + 5));
+	edges[Side::Bottom].push_front(Edge(rect.bottom, endX, endX + 5));*/
 }
 
 bool operator ==(const RECT& _1, const RECT& _2)
@@ -148,14 +148,24 @@ LRESULT CALLBACK TemporarySubclassProc(HWND window, int message, WPARAM wparam, 
 			return TRUE;
 		}, 0);
 
+#ifdef LOG
+		HANDLE logFile = CreateFile(L"C:\\Users\\Nicholas\\Desktop\\log.txt", GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+#endif
+
 		struct Param
 		{
 			HWND thisWindow;
 			std::list<RECT> windowRects;
+#ifdef LOG
+			HANDLE logFile;
+#endif
 		};
 
 		Param param;
 		param.thisWindow = window;
+#ifdef LOG
+		param.logFile = logFile;
+#endif
 
 		EnumWindows([](HWND windowHandle, LPARAM _param) -> BOOL
 		{
@@ -166,14 +176,21 @@ LRESULT CALLBACK TemporarySubclassProc(HWND window, int message, WPARAM wparam, 
 				return TRUE;
 			if (IsIconic(windowHandle))
 				return TRUE;
-			wchar_t title[256];
-			GetWindowText(windowHandle, title, 256);
 
+			wchar_t className[256];
+			if (GetClassName(windowHandle, className, 256) != 0)
+			{
+				for each (wchar_t* ignoredName in windowClassesToIgnore)
+				{
+					if (wcscmp(className, ignoredName) == 0)
+						return TRUE;
+				}
+			}
 			int styles = (int) GetWindowLongPtr(windowHandle, GWL_STYLE);
 			if ((styles & WS_CHILD) != 0)
 				return TRUE;
 			int extendedStyles = (int) GetWindowLongPtr(windowHandle, GWL_EXSTYLE);
-			if ((extendedStyles & WS_EX_TOOLWINDOW) != 0)
+			if ((extendedStyles & WS_EX_TOOLWINDOW) != 0 || (extendedStyles & WS_EX_NOACTIVATE) != 0)
 				return TRUE;
 			WINDOWPLACEMENT windowPlacement;
 			windowPlacement.length = sizeof(windowPlacement);
@@ -202,6 +219,16 @@ LRESULT CALLBACK TemporarySubclassProc(HWND window, int message, WPARAM wparam, 
 				param->windowRects.push_back(thisRect);
 				if (!isMaximized)
 					AddRectToEdges(thisRect);
+
+#ifdef LOG
+				char title[256];
+				GetWindowTextA(windowHandle, title, 256);
+				char messageBuffer[256];
+				sprintf_s(messageBuffer, "%s - RECT(%d, %d, %d, %d) - %s\r\n", title, thisRect.left, thisRect.top, thisRect.right, thisRect.bottom, !isMaximized ? "yes" : "no");
+
+				DWORD bytesWritten;
+				WriteFile(param->logFile, messageBuffer, strlen(messageBuffer), &bytesWritten, nullptr);
+#endif
 			}
 
 			return TRUE;
@@ -212,10 +239,37 @@ LRESULT CALLBACK TemporarySubclassProc(HWND window, int message, WPARAM wparam, 
 			edgeList.sort([](const Edge& _1, const Edge& _2) -> bool { return _1.Position < _2.Position; });
 			edgeList.erase(std::unique(edgeList.begin(), edgeList.end()), edgeList.end());
 		}
+
+#ifdef LOG
+		char messageBuffer[2048];
+		strcpy_s(messageBuffer, "== BEGIN EDGES ==\r\n");
+
+		for each (const auto& edgeList in edges)
+		{
+			for each (const Edge& edge in edgeList)
+			{
+				char edgeBuffer[64];
+				sprintf_s(edgeBuffer, "%d %d %d\r\n", edge.Position, edge.Start, edge.End);
+				strcat_s(messageBuffer, edgeBuffer);
+			}
+		}
+
+		strcat_s(messageBuffer, "== END EDGES ==\r\n");
+
+		DWORD bytesWritten;
+		WriteFile(logFile, messageBuffer, strlen(messageBuffer), &bytesWritten, nullptr);
+		CloseHandle(logFile);
+#endif
 	}
 	else if (message == WM_MOVING)
 	{
 		RECT& bounds = *reinterpret_cast<RECT*>(lparam);
+		RECT oldBounds = bounds;
+
+		// If the window already handles WM_MOVING, back off
+		LRESULT result = CallWindowProc(oldSubclassProc, window, message, wparam, lparam);
+		if (result != 0 || bounds != oldBounds)
+			return result;
 
 		// The difference between the cursor position and the top-left corner of the dragged window.
 		// This is normally constant while dragging a window, but when near an edge that we snap to,
@@ -291,13 +345,19 @@ LRESULT CALLBACK TemporarySubclassProc(HWND window, int message, WPARAM wparam, 
 	}
 	else if (message == WM_SIZING)
 	{
+		RECT& bounds = *reinterpret_cast<RECT*>(lparam);
+		RECT oldBounds = bounds;
+
+		// If the window already handles WM_SIZING, back off
+		LRESULT result = CallWindowProc(oldSubclassProc, window, message, wparam, lparam);
+		if (result != 0 || bounds != oldBounds)
+			return result;
+
 		bool allowSnap[Side::Count] = { true, true, true, true };
 		allowSnap[Side::Left] = (wparam == WMSZ_LEFT || wparam == WMSZ_TOPLEFT || wparam == WMSZ_BOTTOMLEFT);
 		allowSnap[Side::Top] = (wparam == WMSZ_TOP || wparam == WMSZ_TOPLEFT || wparam == WMSZ_TOPRIGHT);
 		allowSnap[Side::Right] = (wparam == WMSZ_RIGHT || wparam == WMSZ_TOPRIGHT || wparam == WMSZ_BOTTOMRIGHT);
 		allowSnap[Side::Bottom] = (wparam == WMSZ_BOTTOM || wparam == WMSZ_BOTTOMLEFT || wparam == WMSZ_BOTTOMRIGHT);
-
-		RECT& bounds = *reinterpret_cast<RECT*>(lparam);
 
 		// The difference between the cursor position and the top-left corner of the dragged window.
 		// This is normally constant while dragging a window, but when near an edge that we snap to,
@@ -362,11 +422,8 @@ LRESULT CALLBACK TemporarySubclassProc(HWND window, int message, WPARAM wparam, 
 	else if (message == WM_EXITSIZEMOVE)
 	{
 		inProgress = false;
-
-		return 0;
 	}
 
-Passthrough:
 	return CallWindowProc(oldSubclassProc, window, message, wparam, lparam);
 }
 
@@ -403,22 +460,32 @@ BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, LPVOID)
 	{
 	case DLL_PROCESS_ATTACH:
 	{
-//		wchar_t fileName[MAX_PATH];
-//		GetModuleFileName(nullptr, fileName, MAX_PATH);
-//		if (wcsstr(fileName, L"notepad.exe") != nullptr)
-//		{
-			enabled = true;
-//			logHandle = CreateFile(L"C:\\Users\\Nicholas\\Desktop\\log.txt", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-//			SetFilePointer(logHandle, 0, nullptr, FILE_END);
-//		}
-//		else
-//			enabled = false;
+		wchar_t filename[MAX_PATH + 1];
+		int result = GetModuleFileName(nullptr, filename, MAX_PATH);
+		if (result > 0)
+		{
+			// Get the filename without path and normalize it to lowercase for comparison.
+			filename[result] = '\0';
+			wchar_t baseFilename[MAX_PATH];
+			wchar_t* lastSlash = wcsrchr(filename, '\\');
+			wcscpy_s(baseFilename, lastSlash + 1);
+			_wcslwr_s(baseFilename);
+
+			if (wcscmp(baseFilename, L"explorer.exe") == 0)
+			{
+				windowClassesToIgnore.push_back(L"SearchPane");
+				windowClassesToIgnore.push_back(L"NativeHWNDHost");
+				windowClassesToIgnore.push_back(L"EdgeUiInputWndClass");
+			}
+		}
+
+		// Enable for all processes
+		enabled = true;
 		break;
 	}
 
 	case DLL_PROCESS_DETACH:
 	{
-		CloseHandle(logHandle);
 		break;
 	}
 	}

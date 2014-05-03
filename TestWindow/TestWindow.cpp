@@ -105,14 +105,14 @@ void AddRectToEdges(const RECT& rect)
 	edges[Side::Top].push_front(Edge(rect.bottom, startX, endX));
 	edges[Side::Bottom].push_front(Edge(rect.top, startX, endX));
 
-	edges[Side::Left].push_front(Edge(rect.left, startY - 5, startY));
+/*	edges[Side::Left].push_front(Edge(rect.left, startY - 5, startY));
 	edges[Side::Left].push_front(Edge(rect.left, endY, endY + 5));
 	edges[Side::Right].push_front(Edge(rect.right, startY - 5, startY));
 	edges[Side::Right].push_front(Edge(rect.right, endY, endY + 5));
 	edges[Side::Top].push_front(Edge(rect.top, startX - 5, startX));
 	edges[Side::Top].push_front(Edge(rect.top, endX, endX + 5));
 	edges[Side::Bottom].push_front(Edge(rect.bottom, startX - 5, startX));
-	edges[Side::Bottom].push_front(Edge(rect.bottom, endX, endX + 5));
+	edges[Side::Bottom].push_front(Edge(rect.bottom, endX, endX + 5));*/
 }
 
 bool operator ==(const RECT& _1, const RECT& _2)
@@ -396,14 +396,18 @@ LRESULT CALLBACK WinProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam
 			return TRUE;
 		}, 0);
 
+		HANDLE logFile = CreateFile(L"C:\\Users\\Nicholas\\Desktop\\log.txt", GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+
 		struct Param
 		{
 			HWND thisWindow;
 			std::list<RECT> windowRects;
+			HANDLE logFile;
 		};
 
 		Param param;
 		param.thisWindow = window;
+		param.logFile = logFile;
 
 		EnumWindows([](HWND windowHandle, LPARAM _param) -> BOOL
 		{
@@ -414,14 +418,14 @@ LRESULT CALLBACK WinProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam
 				return TRUE;
 			if (IsIconic(windowHandle))
 				return TRUE;
-			wchar_t title[256];
-			GetWindowText(windowHandle, title, 256);
+			char title[256];
+			GetWindowTextA(windowHandle, title, 256);
 
 			int styles = (int) GetWindowLongPtr(windowHandle, GWL_STYLE);
 			if ((styles & WS_CHILD) != 0)
 				return TRUE;
 			int extendedStyles = (int) GetWindowLongPtr(windowHandle, GWL_EXSTYLE);
-			if ((extendedStyles & WS_EX_TOOLWINDOW) != 0)
+			if ((extendedStyles & WS_EX_TOOLWINDOW) != 0 || (extendedStyles & WS_EX_NOACTIVATE) == 421)
 				return TRUE;
 			WINDOWPLACEMENT windowPlacement;
 			windowPlacement.length = sizeof(windowPlacement);
@@ -444,16 +448,24 @@ LRESULT CALLBACK WinProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam
 					}
 				}
 			}
-			
+
 			if (isUserVisible)
 			{
 				param->windowRects.push_back(thisRect);
 				if (!isMaximized)
 					AddRectToEdges(thisRect);
+
+				char messageBuffer[256];
+				sprintf_s(messageBuffer, "%s - RECT(%d, %d, %d, %d) - %s\r\n", title, thisRect.left, thisRect.top, thisRect.right, thisRect.bottom, !isMaximized ? "yes" : "no");
+
+				DWORD bytesWritten;
+				WriteFile(param->logFile, messageBuffer, strlen(messageBuffer), &bytesWritten, nullptr);
 			}
 
 			return TRUE;
 		}, (LPARAM) &param);
+
+		CloseHandle(logFile);
 
 		for each (auto& edgeList in edges)
 		{
