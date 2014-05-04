@@ -8,7 +8,8 @@
 
 #pragma data_seg(".shared")
 
-HHOOK hookHandle;
+// Hook handle, shared among all injected DLLs.
+HHOOK hookHandle = nullptr;
 
 #pragma data_seg()
 
@@ -28,7 +29,7 @@ LRESULT CALLBACK TemporarySubclassProc(HWND window, int message, WPARAM wparam, 
 			RECT& bounds = *reinterpret_cast<RECT*>(lparam);
 			RECT oldBounds = bounds;
 
-			// If the window already handles the message, back off
+			// If the window already handles the message, back off.
 			LRESULT result = CallWindowProc(oldSubclassProc, window, message, wparam, lparam);
 			if (result != 0 || bounds != oldBounds)
 				return result;
@@ -44,6 +45,7 @@ LRESULT CALLBACK TemporarySubclassProc(HWND window, int message, WPARAM wparam, 
 
 extern "C"
 {
+	// The CallWndProc procedure passed into SetWindowsHookEx
 	LRESULT CALLBACK HookProc(int code, WPARAM wparam, LPARAM lparam)
 	{
 		auto cwp = reinterpret_cast<CWPSTRUCT*>(lparam);
@@ -57,10 +59,11 @@ extern "C"
 
 			return 0;
 		}
-		else if (code < 0)
-			return CallNextHookEx(hookHandle, code, wparam, lparam);
 		else
+		{
+			// If hookHandle hasn't been set yet, oh well; there's nothing we can do about it.
 			return CallNextHookEx(hookHandle, code, wparam, lparam);
+		}
 	}
 
 	void SetHookHandle(HHOOK handle)
@@ -69,7 +72,7 @@ extern "C"
 	}
 }
 
-BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, LPVOID)
+BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
 {
 	switch (reason)
 	{

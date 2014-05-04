@@ -29,7 +29,9 @@ struct Edge
 
 class Snap
 {
-	// A sorted list of edges which can be snapped to for each side of the window.
+	// The distance at which edges will snap.
+	static const int snapDistance = 15;
+	// An array of sorted lists of edges which can be snapped to for each side of the window.
 	std::list<Edge> edges[Side::Count];
 	// The difference between the cursor position and the top-left of the window being dragged.
 	POINT originalCursorOffset;
@@ -39,7 +41,8 @@ class Snap
 	HWND window;
 
 	void AddRectToEdges(const RECT& rect);
-	void SnapToRect(RECT* bounds, const RECT& rect, bool retainSize, bool left, bool top, bool right, bool bottom);
+	void SnapToRect(RECT* bounds, const RECT& rect, bool retainSize, bool left, bool top, bool right, bool bottom) const;
+	bool CanSnapEdge(int boundsEdges[Side::Count], Side::Value which, int* snapPosition) const;
 
 	bool HandleEnterSizeMove();
 	bool HandleExitSizeMove();

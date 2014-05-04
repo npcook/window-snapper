@@ -60,6 +60,9 @@ bool Snap::HandleEnterSizeMove()
 		if (GetMonitorInfo(monitorHandle, &monitorInfo) == 0)
 			return FALSE;
 
+		// AddRectToEdges adds edges for the outside of a rectangle, which works well
+		// for windows.  For monitors, however, we want to snap to the inside, so we 
+		// swap the opposite edges.
 		std::swap(monitorInfo.rcWork.left, monitorInfo.rcWork.right);
 		std::swap(monitorInfo.rcWork.top, monitorInfo.rcWork.bottom);
 		reinterpret_cast<Snap*>(param)->AddRectToEdges(monitorInfo.rcWork);
@@ -74,7 +77,7 @@ bool Snap::HandleEnterSizeMove()
 	struct Param
 	{
 		Snap* _this;
-		std::list<RECT> windowRects;
+		std::list<HRGN> windowRegions;
 #ifdef LOG
 		HANDLE logFile;
 #endif
@@ -88,6 +91,7 @@ bool Snap::HandleEnterSizeMove()
 
 	EnumWindows([](HWND windowHandle, LPARAM _param) -> BOOL
 	{
+		// We don't want non-application windows or application windows the user can't see.
 		auto param = reinterpret_cast<Param*>(_param);
 		if (windowHandle == param->_this->window)
 			return TRUE;
@@ -105,24 +109,26 @@ bool Snap::HandleEnterSizeMove()
 
 		RECT thisRect;
 		GetWindowRect(windowHandle, &thisRect);
+		HRGN thisRegion = CreateRectRgnIndirect(&thisRect);
 
+		// Since EnumWindows enumerates from the highest z-order to the lowest, we
+		// can just check to see if this window is covered by any previous ones.
 		bool isUserVisible = true;
-		for each (RECT rect in param->windowRects)
+		for each (HRGN region in param->windowRegions)
 		{
-			RECT intersection;
-			if (IntersectRect(&intersection, &thisRect, &rect) != 0)
+			if (CombineRgn(thisRegion, thisRegion, region, RGN_DIFF) == NULLREGION)
 			{
-				if (intersection == thisRect)
-				{
-					isUserVisible = false;
-					break;
-				}
+				isUserVisible = false;
+				break;
 			}
 		}
 
 		if (isUserVisible)
 		{
-			param->windowRects.push_back(thisRect);
+			param->windowRegions.push_back(thisRegion);
+
+			// Maximized windows by definition cover the whole work area, so the
+			// only snap edges they would have are on the outside of the monitor.
 			if (!IsZoomed(windowHandle))
 				param->_this->AddRectToEdges(thisRect);
 
@@ -136,9 +142,16 @@ bool Snap::HandleEnterSizeMove()
 			WriteFile(param->logFile, messageBuffer, strlen(messageBuffer), &bytesWritten, nullptr);
 #endif
 		}
+		else
+			DeleteObject(thisRegion);
 
 		return TRUE;
 	}, (LPARAM) &param);
+
+	for each (HRGN region in param.windowRegions)
+	{
+		DeleteObject(region);
+	}
 
 	for each (auto& edgeList in edges)
 	{
@@ -203,27 +216,13 @@ bool Snap::HandleMoving(RECT& bounds)
 	int snapEdges[Side::Count] = { SHRT_MIN, SHRT_MIN, SHRT_MAX, SHRT_MAX };
 	bool snapDirections[Side::Count] = { false, false, false, false };
 
-	// Snap a window when it is within snapDistance units of a screen edge.
-	const int snapDistance = 15;
-
 	for (int i = 0; i < Side::Count; ++i)
 	{
-		for each (const Edge& edge in edges[i])
+		int snapPosition;
+		if (CanSnapEdge(boundsEdges, (Side::Value) i, &snapPosition))
 		{
-			int edgeDistance = edge.Position - boundsEdges[i];
-			if (edgeDistance >= snapDistance)
-				break;
-			else if (edgeDistance > -snapDistance)
-			{
-				int min = std::min<>(boundsEdges[(i + 1) % Side::Count], boundsEdges[(i + 3) % Side::Count]);
-				int max = std::max<>(boundsEdges[(i + 1) % Side::Count], boundsEdges[(i + 3) % Side::Count]);
-				if (max > edge.Start && min < edge.End)
-				{
-					snapDirections[i] = true;
-					snapEdges[i] = edge.Position;
-					break;
-				}
-			}
+			snapDirections[i] = true;
+			snapEdges[i] = snapPosition;
 		}
 	}
 
@@ -272,29 +271,15 @@ bool Snap::HandleSizing(RECT& bounds, int which)
 	int snapEdges[Side::Count] = { SHRT_MIN, SHRT_MIN, SHRT_MAX, SHRT_MAX };
 	bool snapDirections[Side::Count] = { false, false, false, false };
 
-	// Snap a window when it is within snapDistance units of a screen edge.
-	const int snapDistance = 15;
-
 	for (int i = 0; i < Side::Count; ++i)
 	{
 		if (!allowSnap[i])
 			continue;
-		for each (const Edge& edge in edges[i])
+		int snapPosition;
+		if (CanSnapEdge(boundsEdges, (Side::Value) i, &snapPosition))
 		{
-			int edgeDistance = edge.Position - boundsEdges[i];
-			if (edgeDistance >= snapDistance)
-				break;
-			else if (edgeDistance > -snapDistance)
-			{
-				int min = std::min<>(boundsEdges[(i + 1) % Side::Count], boundsEdges[(i + 3) % Side::Count]);
-				int max = std::max<>(boundsEdges[(i + 1) % Side::Count], boundsEdges[(i + 3) % Side::Count]);
-				if (max > edge.Start && min < edge.End)
-				{
-					snapDirections[i] = true;
-					snapEdges[i] = edge.Position;
-					break;
-				}
-			}
+			snapDirections[i] = true;
+			snapEdges[i] = snapPosition;
 		}
 	}
 
@@ -348,7 +333,7 @@ void Snap::AddRectToEdges(const RECT& rect)
 #endif
 }
 
-void Snap::SnapToRect(RECT* bounds, const RECT& rect, bool retainSize, bool left, bool top, bool right, bool bottom)
+void Snap::SnapToRect(RECT* bounds, const RECT& rect, bool retainSize, bool left, bool top, bool right, bool bottom) const
 {
 	if (left && right)
 	{
@@ -395,4 +380,30 @@ void Snap::SnapToRect(RECT* bounds, const RECT& rect, bool retainSize, bool left
 		bounds->top = bounds->top;
 		bounds->bottom = bounds->bottom;
 	}
+}
+
+bool Snap::CanSnapEdge(int boundsEdges[Side::Count], Side::Value which, int* snapPosition) const
+{
+	for each (const Edge& edge in edges[which])
+	{
+		int edgeDistance = edge.Position - boundsEdges[which];
+		// Since each edge list is sorted, if the snap edge is past our bound's edge,
+		// we know that none of the other edges will work.
+		if (edgeDistance >= snapDistance)
+			break;
+		else if (edgeDistance > -snapDistance)
+		{
+			// The modulos get the position of the edges perpendicular to the bound
+			// edge we are working on.
+			int min = std::min<>(boundsEdges[(which + 1) % Side::Count], boundsEdges[(which + 3) % Side::Count]);
+			int max = std::max<>(boundsEdges[(which + 1) % Side::Count], boundsEdges[(which + 3) % Side::Count]);
+			if (max > edge.Start && min < edge.End)
+			{
+				*snapPosition = edge.Position;
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
