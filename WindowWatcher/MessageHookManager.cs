@@ -7,7 +7,7 @@ using System.Windows;
 
 using NotifyIcon = System.Windows.Forms.NotifyIcon;
 
-namespace WindowWatcher
+namespace WindowSnapper
 {
 	class MessageHookManager : IDisposable
 	{

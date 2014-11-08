@@ -136,7 +136,7 @@ bool Snap::HandleEnterSizeMove()
 			char title[256];
 			GetWindowTextA(windowHandle, title, 256);
 			char messageBuffer[256];
-			sprintf_s(messageBuffer, "%s - RECT(%d, %d, %d, %d) - %s\r\n", title, thisRect.left, thisRect.top, thisRect.right, thisRect.bottom, !isMaximized ? "yes" : "no");
+			sprintf_s(messageBuffer, "%s - RECT(%d, %d, %d, %d) - %s\r\n", title, thisRect.left, thisRect.top, thisRect.right, thisRect.bottom, !IsZoomed(windowHandle) ? "yes" : "no");
 
 			DWORD bytesWritten;
 			WriteFile(param->logFile, messageBuffer, strlen(messageBuffer), &bytesWritten, nullptr);
@@ -179,6 +179,12 @@ bool Snap::HandleEnterSizeMove()
 	WriteFile(logFile, messageBuffer, strlen(messageBuffer), &bytesWritten, nullptr);
 	CloseHandle(logFile);
 #endif
+
+	RECT bounds;
+	GetWindowRect(window, &bounds);
+	GetCursorPos(&originalCursorOffset);
+	originalCursorOffset.x -= bounds.left;
+	originalCursorOffset.y -= bounds.top;
 
 	return true;
 }
@@ -229,10 +235,7 @@ bool Snap::HandleMoving(RECT& bounds)
 	if ((GetKeyState(VK_MENU) & 0x8000) == 0 && (snapDirections[0] || snapDirections[1] || snapDirections[2] || snapDirections[3]))
 	{
 		if (!inProgress)
-		{
 			inProgress = true;
-			originalCursorOffset = cursorOffset;
-		}
 
 		RECT snapRect = { snapEdges[0], snapEdges[1], snapEdges[2], snapEdges[3] };
 		bounds = realBounds;
@@ -286,10 +289,7 @@ bool Snap::HandleSizing(RECT& bounds, int which)
 	if ((GetKeyState(VK_MENU) & 0x8000) == 0 && (snapDirections[0] || snapDirections[1] || snapDirections[2] || snapDirections[3]))
 	{
 		if (!inProgress)
-		{
 			inProgress = true;
-			originalCursorOffset = cursorOffset;
-		}
 
 		RECT snapRect = { snapEdges[0], snapEdges[1], snapEdges[2], snapEdges[3] };
 		SnapToRect(&bounds, snapRect, false, snapDirections[0], snapDirections[1], snapDirections[2], snapDirections[3]);

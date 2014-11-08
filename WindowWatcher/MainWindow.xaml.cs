@@ -21,7 +21,7 @@ using System.Diagnostics;
 using Thread = System.Threading.Thread;
 using NotifyIcon = System.Windows.Forms.NotifyIcon;
 
-namespace WindowWatcher
+namespace WindowSnapper
 {
 	/// <summary>
 	/// Interaction logic for MainWindow.xaml

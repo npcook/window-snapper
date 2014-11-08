@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 
-namespace WindowWatcher
+namespace WindowSnapper
 {
 	internal static class Native
 	{
